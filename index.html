@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex, nofollow"/>
+<title>특이사항 보고서</title>
+<style>
+  :root{
+    --bg:#f4f2ec; --card:#ffffff; --ink:#2b2a27; --ink2:#6b6862; --ink3:#9b978f;
+    --border:#e0ddd5; --accent:#4a6fa5; --danger:#E24B4A;
+    --bg-danger:#fbeceb; --bg-info:#eaf1fa;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1140px;margin:0 auto;padding:20px 16px 60px;}
+  /* ----- 로그인 ----- */
+  #gate{min-height:80vh;display:flex;align-items:center;justify-content:center;}
+  .gatecard{background:var(--card);border:1px solid var(--border);border-radius:16px;
+    padding:34px 30px;width:100%;max-width:340px;text-align:center;
+    box-shadow:0 2px 14px rgba(0,0,0,.05);}
+  .lock{font-size:30px;margin-bottom:8px;}
+  .gatecard h1{font-size:17px;margin:0 0 4px;font-weight:700;}
+  .gatecard p{font-size:12.5px;color:var(--ink2);margin:0 0 22px;}
+  #code{width:100%;font-size:22px;letter-spacing:.32em;text-align:center;
+    padding:12px 10px;border:1.4px solid var(--border);border-radius:10px;outline:none;
+    font-family:inherit;background:#fcfbf9;}
+  #code:focus{border-color:var(--accent);}
+  button#enter{margin-top:14px;width:100%;padding:12px;font-size:15px;font-weight:600;
+    color:#fff;background:var(--accent);border:none;border-radius:10px;cursor:pointer;}
+  button#enter:active{opacity:.85;}
+  button#enter:disabled{opacity:.5;cursor:default;}
+  #err{color:var(--danger);font-size:12.5px;margin-top:12px;min-height:16px;}
+  /* ----- 본문 ----- */
+  #app{display:none;}
+  .topbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .topbar h1{font-size:16px;margin:0;font-weight:700;}
+  .spacer{flex:1;}
+  select#picker{font-size:13px;padding:7px 10px;border:1px solid var(--border);
+    border-radius:8px;background:#fff;font-family:inherit;color:var(--ink);}
+  .btn-ghost{font-size:12px;padding:7px 11px;border:1px solid var(--border);
+    border-radius:8px;background:#fff;color:var(--ink2);cursor:pointer;font-family:inherit;}
+  #report{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    padding:6px 22px 22px;
+    --color-text-primary:var(--ink);--color-text-secondary:var(--ink2);
+    --color-text-tertiary:var(--ink3);--color-background-danger:var(--bg-danger);
+    --color-background-info:var(--bg-info);}
+  .muted{color:var(--ink3);font-size:12px;text-align:center;padding:30px;}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 진입코드 게이트 -->
+  <div id="gate">
+    <form class="gatecard" id="gateform">
+      <div class="lock">🔒</div>
+      <h1>내포소망주간보호 특이사항 보고서</h1>
+      <p>열람하려면 진입코드를 입력하세요</p>
+      <input id="code" inputmode="text" autocomplete="off" autofocus placeholder="••••"/>
+      <button id="enter" type="submit">열기</button>
+      <div id="err"></div>
+    </form>
+  </div>
+
+  <!-- 보고서 본문 -->
+  <div id="app">
+    <div class="topbar">
+      <h1>특이사항 보고서</h1>
+      <div class="spacer"></div>
+      <select id="picker" aria-label="보고서 날짜 선택"></select>
+      <button class="btn-ghost" id="lock">잠그기</button>
+    </div>
+    <div id="report"><div class="muted">불러오는 중…</div></div>
+  </div>
+
+</div>
+
+<script>
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+let PASS = null;           // 입력된 진입코드 (세션 메모리에만 유지)
+let manifest = [];
+
+const b64ToBytes = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+async function deriveKey(passcode, saltBytes, iter){
+  const baseKey = await crypto.subtle.importKey('raw', enc.encode(passcode),
+    {name:'PBKDF2'}, false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    {name:'PBKDF2', salt:saltBytes, iterations:iter, hash:'SHA-256'},
+    baseKey, {name:'AES-GCM', length:256}, false, ['decrypt']);
+}
+
+async function decryptPayload(payload, passcode){
+  const salt = b64ToBytes(payload.salt);
+  const iv = b64ToBytes(payload.iv);
+  const ct = b64ToBytes(payload.ct);
+  const key = await deriveKey(passcode, salt, payload.iter || 100000);
+  const plainBuf = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct);
+  return dec.decode(plainBuf);
+}
+
+async function fetchJSON(url){
+  const r = await fetch(url, {cache:'no-store'});
+  if(!r.ok) throw new Error('not found');
+  return r.json();
+}
+
+// 진입코드 제출
+document.getElementById('gateform').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const code = document.getElementById('code').value.trim();
+  const errEl = document.getElementById('err');
+  const btn = document.getElementById('enter');
+  errEl.textContent=''; btn.disabled=true; btn.textContent='확인 중…';
+  try{
+    manifest = (await fetchJSON('manifest.json')).reports || [];
+    if(!manifest.length){ throw {nodata:true}; }
+    // 가장 최신 보고서로 코드 검증
+    const latest = await fetchJSON(manifest[0].key + '.json');
+    await decryptPayload(latest, code);    // 틀리면 여기서 예외
+    PASS = code;
+    enterApp(latest, manifest[0].key);
+  }catch(ex){
+    if(ex && ex.nodata){ errEl.textContent='아직 등록된 보고서가 없습니다.'; }
+    else { errEl.textContent='진입코드가 올바르지 않습니다.'; }
+    btn.disabled=false; btn.textContent='열기';
+    document.getElementById('code').select();
+  }
+});
+
+function enterApp(firstPayload, firstKey){
+  document.getElementById('gate').style.display='none';
+  document.getElementById('app').style.display='block';
+  const picker = document.getElementById('picker');
+  picker.innerHTML = manifest.map(r=>`<option value="${r.key}">${r.date}</option>`).join('');
+  picker.value = firstKey;
+  renderPayload(firstPayload);
+  picker.addEventListener('change', loadSelected);
+}
+
+async function loadSelected(){
+  const key = document.getElementById('picker').value;
+  const rep = document.getElementById('report');
+  rep.innerHTML = '<div class="muted">불러오는 중…</div>';
+  try{
+    const payload = await fetchJSON(key + '.json');
+    const html = await decryptPayload(payload, PASS);
+    rep.innerHTML = html;
+  }catch(ex){ rep.innerHTML = '<div class="muted">보고서를 불러오지 못했습니다.</div>'; }
+}
+
+async function renderPayload(payload){
+  const rep = document.getElementById('report');
+  try{ rep.innerHTML = await decryptPayload(payload, PASS); }
+  catch(ex){ rep.innerHTML = '<div class="muted">보고서를 불러오지 못했습니다.</div>'; }
+}
+
+// 잠그기
+document.getElementById('lock').addEventListener('click', ()=>{ location.reload(); });
+</script>
+</body>
+</html>
