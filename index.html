@@ -85,6 +85,18 @@ const dec = new TextDecoder();
 let PASS = null;           // 입력된 진입코드 (세션 메모리에만 유지)
 let manifest = [];
 
+// 보고서 목록 정렬: 최신 날짜 먼저, 같은 날짜면 일일 보고를 주간보다 먼저.
+// (주간 키 'W2026..'가 숫자 키보다 위로 뜨던 문제 해결 → 항상 최신 일일 보고가 기본)
+function sortManifest(list){
+  const eff = r => { const m=(r.key||'').match(/(\d{8})/); return m?m[1]:'00000000'; };
+  const isW = r => (r.key||'').charAt(0)==='W';
+  return (list||[]).slice().sort((a,b)=>{
+    const ea=eff(a), eb=eff(b);
+    if(ea!==eb) return eb.localeCompare(ea);     // 최신 날짜 우선
+    return (isW(a)?1:0) - (isW(b)?1:0);          // 동일 날짜면 일일 먼저
+  });
+}
+
 const b64ToBytes = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
 async function deriveKey(passcode, saltBytes, iter){
@@ -118,7 +130,7 @@ document.getElementById('gateform').addEventListener('submit', async (e)=>{
   const btn = document.getElementById('enter');
   errEl.textContent=''; btn.disabled=true; btn.textContent='확인 중…';
   try{
-    manifest = (await fetchJSON('manifest.json')).reports || [];
+    manifest = sortManifest((await fetchJSON('manifest.json')).reports || []);
     if(!manifest.length){ throw {nodata:true}; }
     // 가장 최신 보고서로 코드 검증
     const latest = await fetchJSON(manifest[0].key + '.json');
