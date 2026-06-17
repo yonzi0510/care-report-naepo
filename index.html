@@ -38,8 +38,14 @@
   .topbar{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
   .topbar h1{font-size:16px;margin:0;font-weight:700;}
   .spacer{flex:1;}
+  /* ----- 일/주/월 탭 ----- */
+  .tabs{display:inline-flex;gap:4px;background:#ece9e1;border-radius:10px;padding:3px;}
+  .tab{font-size:13px;padding:6px 16px;border:none;border-radius:8px;background:transparent;
+    color:var(--ink2);cursor:pointer;font-family:inherit;font-weight:500;}
+  .tab.active{background:#fff;color:var(--accent);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.08);}
+  .tab:disabled{opacity:.38;cursor:default;}
   select#picker{font-size:13px;padding:7px 10px;border:1px solid var(--border);
-    border-radius:8px;background:#fff;font-family:inherit;color:var(--ink);}
+    border-radius:8px;background:#fff;font-family:inherit;color:var(--ink);max-width:220px;}
   .btn-ghost{font-size:12px;padding:7px 11px;border:1px solid var(--border);
     border-radius:8px;background:#fff;color:var(--ink2);cursor:pointer;font-family:inherit;}
   #report{background:var(--card);border:1px solid var(--border);border-radius:14px;
@@ -70,8 +76,13 @@
   <div id="app">
     <div class="topbar">
       <h1>특이사항 보고서</h1>
+      <div class="tabs" id="tabs" role="tablist">
+        <button class="tab" data-cat="day"   role="tab">일간</button>
+        <button class="tab" data-cat="week"  role="tab">주간</button>
+        <button class="tab" data-cat="month" role="tab">월간</button>
+      </div>
       <div class="spacer"></div>
-      <select id="picker" aria-label="보고서 날짜 선택"></select>
+      <select id="picker" aria-label="보고서 선택"></select>
       <button class="btn-ghost" id="lock">잠그기</button>
     </div>
     <div id="report"><div class="muted">불러오는 중…</div></div>
@@ -84,20 +95,16 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 let PASS = null;           // 입력된 진입코드 (세션 메모리에만 유지)
 let manifest = [];
-
-// 보고서 목록 정렬: 최신 날짜 먼저, 같은 날짜면 일일 보고를 주간보다 먼저.
-// (주간 키 'W2026..'가 숫자 키보다 위로 뜨던 문제 해결 → 항상 최신 일일 보고가 기본)
-function sortManifest(list){
-  const eff = r => { const m=(r.key||'').match(/(\d{8})/); return m?m[1]:'00000000'; };
-  const isW = r => (r.key||'').charAt(0)==='W';
-  return (list||[]).slice().sort((a,b)=>{
-    const ea=eff(a), eb=eff(b);
-    if(ea!==eb) return eb.localeCompare(ea);     // 최신 날짜 우선
-    return (isW(a)?1:0) - (isW(b)?1:0);          // 동일 날짜면 일일 먼저
-  });
-}
+let curCat = 'day';
 
 const b64ToBytes = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+// manifest 키 접두로 분류: W=주간, M=월간, 8자리 숫자=일간
+function catOf(key){
+  if(/^W/.test(key)) return 'week';
+  if(/^M/.test(key)) return 'month';
+  return 'day';
+}
 
 async function deriveKey(passcode, saltBytes, iter){
   const baseKey = await crypto.subtle.importKey('raw', enc.encode(passcode),
@@ -130,13 +137,13 @@ document.getElementById('gateform').addEventListener('submit', async (e)=>{
   const btn = document.getElementById('enter');
   errEl.textContent=''; btn.disabled=true; btn.textContent='확인 중…';
   try{
-    manifest = sortManifest((await fetchJSON('manifest.json')).reports || []);
+    manifest = (await fetchJSON('manifest.json')).reports || [];
     if(!manifest.length){ throw {nodata:true}; }
     // 가장 최신 보고서로 코드 검증
     const latest = await fetchJSON(manifest[0].key + '.json');
     await decryptPayload(latest, code);    // 틀리면 여기서 예외
     PASS = code;
-    enterApp(latest, manifest[0].key);
+    enterApp();
   }catch(ex){
     if(ex && ex.nodata){ errEl.textContent='아직 등록된 보고서가 없습니다.'; }
     else { errEl.textContent='진입코드가 올바르지 않습니다.'; }
@@ -145,31 +152,53 @@ document.getElementById('gateform').addEventListener('submit', async (e)=>{
   }
 });
 
-function enterApp(firstPayload, firstKey){
+function enterApp(){
   document.getElementById('gate').style.display='none';
   document.getElementById('app').style.display='block';
+
+  // 카테고리별 가용 여부로 탭 활성/비활성
+  const avail = {day:false, week:false, month:false};
+  manifest.forEach(r=>{ avail[catOf(r.key)] = true; });
+  const tabBtns = [...document.querySelectorAll('.tab')];
+  tabBtns.forEach(b=>{
+    const c = b.dataset.cat;
+    b.disabled = !avail[c];
+    b.addEventListener('click', ()=>{ if(!b.disabled) selectTab(c); });
+  });
+
+  // 기본 탭: 일간 → 없으면 주간 → 월간 순
+  const def = avail.day ? 'day' : (avail.week ? 'week' : 'month');
+  selectTab(def);
+}
+
+function selectTab(cat){
+  curCat = cat;
+  document.querySelectorAll('.tab').forEach(b=>{
+    b.classList.toggle('active', b.dataset.cat===cat);
+  });
   const picker = document.getElementById('picker');
-  picker.innerHTML = manifest.map(r=>`<option value="${r.key}">${r.date}</option>`).join('');
-  picker.value = firstKey;
-  renderPayload(firstPayload);
-  picker.addEventListener('change', loadSelected);
+  const list = manifest.filter(r=>catOf(r.key)===cat);  // manifest는 최신순 정렬
+  picker.innerHTML = list.map(r=>`<option value="${r.key}">${r.date}</option>`).join('');
+  if(list.length){
+    picker.value = list[0].key;
+    loadSelected();
+  } else {
+    document.getElementById('report').innerHTML =
+      '<div class="muted">이 분류의 보고서가 아직 없습니다.</div>';
+  }
+  picker.onchange = loadSelected;
 }
 
 async function loadSelected(){
   const key = document.getElementById('picker').value;
   const rep = document.getElementById('report');
+  if(!key){ return; }
   rep.innerHTML = '<div class="muted">불러오는 중…</div>';
   try{
     const payload = await fetchJSON(key + '.json');
     const html = await decryptPayload(payload, PASS);
     rep.innerHTML = html;
   }catch(ex){ rep.innerHTML = '<div class="muted">보고서를 불러오지 못했습니다.</div>'; }
-}
-
-async function renderPayload(payload){
-  const rep = document.getElementById('report');
-  try{ rep.innerHTML = await decryptPayload(payload, PASS); }
-  catch(ex){ rep.innerHTML = '<div class="muted">보고서를 불러오지 못했습니다.</div>'; }
 }
 
 // 잠그기
