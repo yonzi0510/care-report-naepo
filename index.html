@@ -183,22 +183,29 @@ function selectTab(cat){
     picker.value = list[0].key;
     loadSelected();
   } else {
+    _loadSeq++; // 비행 중인 이전 요청이 도착해 이 빈 메시지를 덮어쓰지 못하도록 무효화
     document.getElementById('report').innerHTML =
       '<div class="muted">이 분류의 보고서가 아직 없습니다.</div>';
   }
   picker.onchange = loadSelected;
 }
 
+let _loadSeq = 0; // 빠른 탭/날짜 전환 시 늦게 도착한 이전 요청이 화면을 덮어쓰지 않도록 순서 토큰
 async function loadSelected(){
   const key = document.getElementById('picker').value;
   const rep = document.getElementById('report');
   if(!key){ return; }
+  const seq = ++_loadSeq;
   rep.innerHTML = '<div class="muted">불러오는 중…</div>';
   try{
     const payload = await fetchJSON(key + '.json');
     const html = await decryptPayload(payload, PASS);
+    if(seq !== _loadSeq) return;
     rep.innerHTML = html;
-  }catch(ex){ rep.innerHTML = '<div class="muted">보고서를 불러오지 못했습니다.</div>'; }
+  }catch(ex){
+    if(seq !== _loadSeq) return;
+    rep.innerHTML = '<div class="muted">보고서를 불러오지 못했습니다.</div>';
+  }
 }
 
 // 잠그기
