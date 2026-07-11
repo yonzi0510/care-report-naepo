@@ -36,6 +36,9 @@
     padding:12px 10px;border:1.4px solid var(--border);border-radius:10px;outline:none;
     font-family:inherit;background:#fcfbf9;}
   #code:focus{border-color:var(--accent);}
+  .keep{display:flex;align-items:center;gap:7px;margin-top:14px;font-size:12.5px;color:var(--ink2);}
+  .keep input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;}
+  .keep label{cursor:pointer;}
   button#enter{margin-top:14px;width:100%;padding:12px;font-size:15px;font-weight:600;
     color:#fff;background:var(--accent);border:none;border-radius:10px;cursor:pointer;}
   button#enter:active{opacity:.85;}
@@ -75,10 +78,16 @@
       <h1>내포소망주간보호 특이사항 보고서</h1>
       <p>열람하려면 진입코드를 입력하세요</p>
       <input id="code" inputmode="text" autocomplete="off" autofocus placeholder="••••"/>
+      <div class="keep">
+        <input type="checkbox" id="keep" checked/>
+        <label for="keep">이 기기에서 로그인 상태 유지</label>
+      </div>
       <button id="enter" type="submit">열기</button>
       <div id="err"></div>
     </form>
   </div>
+
+  <div id="autologin" class="muted" style="display:none;padding:30vh 0;">불러오는 중…</div>
 
   <!-- 보고서 본문 -->
   <div id="app">
@@ -101,9 +110,10 @@
 <script>
 const enc = new TextEncoder();
 const dec = new TextDecoder();
-let PASS = null;           // 입력된 진입코드 (세션 메모리에만 유지)
+let PASS = null;           // 입력된 진입코드
 let manifest = [];
 let curCat = 'day';
+const PASS_KEY = 'crn_pass';   // localStorage: 로그인 상태 유지용 저장 키
 
 const b64ToBytes = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
@@ -137,6 +147,16 @@ async function fetchJSON(url){
   return r.json();
 }
 
+// code가 맞으면 manifest를 채우고 PASS를 세팅한 뒤 true, 틀리거나 보고서가 없으면 예외를 던진다
+async function tryLogin(code){
+  manifest = (await fetchJSON('manifest.json')).reports || [];
+  if(!manifest.length){ throw {nodata:true}; }
+  // 가장 최신 보고서로 코드 검증
+  const latest = await fetchJSON(manifest[0].key + '.json');
+  await decryptPayload(latest, code);    // 틀리면 여기서 예외
+  PASS = code;
+}
+
 // 진입코드 제출
 document.getElementById('gateform').addEventListener('submit', async (e)=>{
   e.preventDefault();
@@ -145,12 +165,12 @@ document.getElementById('gateform').addEventListener('submit', async (e)=>{
   const btn = document.getElementById('enter');
   errEl.textContent=''; btn.disabled=true; btn.textContent='확인 중…';
   try{
-    manifest = (await fetchJSON('manifest.json')).reports || [];
-    if(!manifest.length){ throw {nodata:true}; }
-    // 가장 최신 보고서로 코드 검증
-    const latest = await fetchJSON(manifest[0].key + '.json');
-    await decryptPayload(latest, code);    // 틀리면 여기서 예외
-    PASS = code;
+    await tryLogin(code);
+    if(document.getElementById('keep').checked){
+      localStorage.setItem(PASS_KEY, code);
+    } else {
+      localStorage.removeItem(PASS_KEY);
+    }
     enterApp();
   }catch(ex){
     if(ex && ex.nodata){ errEl.textContent='아직 등록된 보고서가 없습니다.'; }
@@ -160,8 +180,25 @@ document.getElementById('gateform').addEventListener('submit', async (e)=>{
   }
 });
 
+// 저장된 진입코드가 있으면 자동 로그인 시도
+(async function autoLogin(){
+  const saved = localStorage.getItem(PASS_KEY);
+  if(!saved) return;
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('autologin').style.display = 'block';
+  try{
+    await tryLogin(saved);
+    enterApp();
+  }catch(ex){
+    localStorage.removeItem(PASS_KEY);   // 코드가 바뀌었거나 무효화된 경우 저장값 정리
+    document.getElementById('autologin').style.display = 'none';
+    document.getElementById('gate').style.display = 'flex';
+  }
+})();
+
 function enterApp(){
   document.getElementById('gate').style.display='none';
+  document.getElementById('autologin').style.display='none';
   document.getElementById('app').style.display='block';
 
   // 카테고리별 가용 여부로 탭 활성/비활성
@@ -216,8 +253,11 @@ async function loadSelected(){
   }
 }
 
-// 잠그기
-document.getElementById('lock').addEventListener('click', ()=>{ location.reload(); });
+// 잠그기 - 저장된 로그인 상태도 함께 지워서 다음 방문 시 다시 코드 입력하게 함
+document.getElementById('lock').addEventListener('click', ()=>{
+  localStorage.removeItem(PASS_KEY);
+  location.reload();
+});
 </script>
 </body>
 </html>
