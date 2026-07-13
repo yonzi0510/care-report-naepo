@@ -34,8 +34,8 @@ def highlight_note(note):
 
 
 def vital_html(vital):
-    if not vital or vital == "/":
-        return '<span class="vital">/</span>'
+    if not vital or vital in ("/", "측정안됨"):
+        return f'<span class="vital">{html.escape(vital or "측정안됨")}</span>'
     m = VITAL_RE.search(vital)
     cls = "vital"
     if m:

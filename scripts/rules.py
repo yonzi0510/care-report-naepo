@@ -27,7 +27,7 @@ KEYWORD_GROUPS = [
 
 
 def parse_vital(vital):
-    if not vital or vital == "/":
+    if not vital or vital in ("/", "측정안됨"):
         return None
     m = VITAL_RE.search(vital)
     if not m:

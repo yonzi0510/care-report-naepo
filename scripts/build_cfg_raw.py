@@ -17,17 +17,17 @@ def build(parsed, date, weekday, date_dot):
         if rec is None:
             continue  # 해당 요일에 스케줄이 없는 사람(예: 토요일 미이용자) - 이 날 보고서 대상 아님
         tt = (rec["total_time"] or "").strip()
-        if tt in ("결석", "일정없음", "미이용") or tt == "":
+        if tt == "일정없음":
+            continue  # 그날 서비스 대상이 아님 - 급여제공/결석 어느 쪽에도 넣지 않고 전체 인원수에서도 제외
+        if tt in ("결석", "미이용") or tt == "":
             absent.append(name)
             phys = (rec["notes"].get("physical") or "").strip()
-            if tt in ("결석", "미이용") and ("개인사유" in phys or "개인사정" in phys):
+            if "개인사유" in phys or "개인사정" in phys:
                 absent_reason[name] = "개인사정으로 인한 결석"
-            elif tt == "일정없음":
-                absent_reason[name] = "일정없음"
             else:
                 absent_reason[name] = tt or "결석"
             continue
-        vital = (rec["vital"] or "").strip() or "/"
+        vital = (rec["vital"] or "").strip() or "측정안됨"
         segments = []
         for cat in SECTION_ORDER:
             val = rec["notes"].get(cat)
