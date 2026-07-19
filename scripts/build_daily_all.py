@@ -49,7 +49,7 @@ def person_card(name, vital, note, verified_tags=None):
     if verified_tags is not None:
         is_juui, tags = (name in verified_tags), verified_tags.get(name, [])
     else:
-        is_juui, tags = judge(vital, note)
+        is_juui, tags = judge(vital, note, name)
     tag_html = ""
     if tags:
         chips = "".join(f'<span class="chip">{html.escape(t)}</span>' for t in tags)
